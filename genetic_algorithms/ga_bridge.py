@@ -2,6 +2,7 @@ import numpy as np
 import os
 import pickle
 from scipy.spatial.distance import euclidean
+from multiprocessing import Pool
 from itertools import combinations, product
 import matplotlib.pyplot as plt
 import sys
@@ -11,6 +12,15 @@ from anastruct.fem.system import SystemElements
 
 class DNA:
     def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.0001):
+        """
+        Define a population with DNA that represents an element in a bridge.
+
+        :param length: (int) Maximum of the bridge.
+        :param height: (int) Maximum height of the bridge.
+        :param pop_size: (int) Size of the population.
+        :param cross_rate: (flt): Factor of the population that will exchange DNA.
+        :param mutation_rate: (flt): Chance of random DNA mutation.
+        """
         self.length = length
         self.height = height
         self.mirror_line = length // 2
@@ -27,11 +37,15 @@ class DNA:
         self.comb = np.array(list(filter(lambda x: euclidean(self.loc[x[1]], self.loc[x[0]]) < 1.5,
                                          combinations(range(len(self.loc)), 2))))
 
+        # Population
         self.pop = np.random.randint(0, 2, size=(pop_size, len(self.comb)))
 
         self.builds = None
 
     def build(self):
+        """
+        Build a bridge based from the current DNA. The bridge will be mirror symmetrical.
+        """
         builds = np.zeros(self.pop_size, dtype=object)
         middle_node = np.zeros(self.pop_size, dtype=int)
         all_lengths = np.zeros(self.pop_size, dtype=int)
@@ -62,7 +76,7 @@ class DNA:
                 ids = list(ss.node_map.keys())
 
                 max_node_id = ids[np.argmax(x_range)]
-
+et the fitness
                 for j in range(self.height):
                     middle_node_id = ss.nearest_node("both", np.array([(length + start) / 2, self.height - j]))
                     if middle_node_id:
@@ -84,6 +98,10 @@ class DNA:
         return builds, middle_node, all_lengths, n_elements
 
     def get_fitness(self):
+        """
+        Get the fitness score of the current generation.
+        :return: (flt)
+        """
         builds, middle_node, fitness_l, fitness_n = self.build()
         fitness_w = np.zeros(self.pop_size)
 
@@ -100,27 +118,45 @@ class DNA:
 
         return fitness_l**2 + fitness_n + fitness_w, fitness_w, fitness_n
 
-    def crossover(self, parent, pop, fitness):
+    def crossover(self, parent, pop):
+        """
+        Swap DNA between parents from the population.
+        :param parent: (array)
+        :param pop: (array) Containing parents
+        :return: (array)
+        """
         if np.random.rand() < self.cross_rate:
-            # i = np.random.choice(np.arange(self.pop_size), size=1, p=fitness / np.sum(fitness))
+            # Draw a lucky guy to mate.
             i = np.random.randint(0, self.pop_size, size=1)
+            # An array with random boolean values.
             cross_index = np.random.randint(0, 2, size=self.comb.shape[0]).astype(np.bool)
+            # The True indexes will be replaced by a random sample i from the population.
             parent[cross_index] = pop[i, cross_index]
 
         return parent
 
     def mutate(self, child):
+        """
+        Do random mutations.
+        :param child: (array) Return by crossover.
+        :return: (array)
+        """
         i = np.where(np.random.random(self.comb.shape[0]) < self.mutation_rate)[0]
         child[i] = np.random.randint(0, 2, size=i.shape)
         return child
 
     def evolve(self, fitness):
+        """
+        Evaluate a generation.
+        :param fitness: (array) Fitness score of the current generation.
+        :return: (array) New population.
+        """
         pop = rank_selection(self.pop, fitness)
         pop_copy = pop.copy()
 
         for i in range(pop.shape[0]):
             parent = pop[i]
-            child = self.crossover(parent, pop_copy, fitness)
+            child = self.crossover(parent, pop_copy)
             child = self.mutate(child)
             parent[:] = child
 
@@ -128,15 +164,32 @@ class DNA:
 
 
 def rank_selection(pop, fitness):
+    """
+    Rank selection. And make a selection based on their ranking score. Note that this isn't the fitness.
+
+    :param pop: (array) Population.
+    :param fitness: (array) Fitness values.
+    :return: (array) Population selection with replacement, selected for mating.
+    """
     order = np.argsort(fitness)[::-1]
+    # Population ordered by fitness.
     pop = pop[order]
 
+    # Rank probability is proportional to you position, not you fitness. So an ordered fitness array, would have these
+    # probabilities [1, 1/2, 1/3 ... 1/n] / sum
     rank_p = 1 / np.arange(1, pop.shape[0] + 1)
+    # Make a selection based on their ranking.
     idx = np.random.choice(np.arange(pop.shape[0]), size=pop.shape[0], replace=True, p=rank_p / np.sum(rank_p))
     return pop[idx]
 
 
 def validate_calc(ss):
+    """
+    Validate if this is a proper structure.
+
+    :param ss: (SystemElement)
+    :return: (bool)
+    """
     try:
         a = ss.validate()
         displacement_matrix = ss.solve()
@@ -165,6 +218,7 @@ def choose_fit_parent(pop):
 
 def mirror(v, m_x):
     """
+    Mirror an array allong the x-axis.
 
     :param v: (array) vertex
     :param m_x: (int) mirror x value
@@ -174,23 +228,23 @@ def mirror(v, m_x):
     return np.array([m_x + m_x - v[0], v[1]])
 
 
-a = DNA(10, 6, 200, cross_rate=0.8, mutation_rate=0.05)
+a = DNA(10, 6, 20, cross_rate=0.8, mutation_rate=0.05)
 # plt.ion()
 
 
 base_dir = "/home/ritchie46/code/machine_learning/vanilla-machine-learning/genetic_algorithms/img/"
-name = "n3"
+name = "n4"
 os.makedirs(os.path.join(base_dir, f"best_{name}"), exist_ok=1)
 
-with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
-    a = pickle.load(f)
-    # a.mutation_rate = 0.1
-    # a.cross_rate= 0.8
-    f, w, n = a.get_fitness()
-    f[np.argwhere(w == 0)] = 0
-    idx = np.argmax(f)
-    print(w[idx], n[idx])
-    a.builds[idx].show_bending_moment()
+# with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
+#     a = pickle.load(f)
+#     # a.mutation_rate = 0.1
+#     # a.cross_rate= 0.8
+#     f, w, n = a.get_fitness()
+#     f[np.argwhere(w == 0)] = 0
+#     idx = np.argmax(f)
+#     print(w[idx], n[idx])
+#     a.builds[idx].show_bending_moment()
 
 last_fitness = 0
 
