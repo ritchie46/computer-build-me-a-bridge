@@ -76,7 +76,7 @@ class DNA:
                 ids = list(ss.node_map.keys())
 
                 max_node_id = ids[np.argmax(x_range)]
-et the fitness
+
                 for j in range(self.height):
                     middle_node_id = ss.nearest_node("both", np.array([(length + start) / 2, self.height - j]))
                     if middle_node_id:
