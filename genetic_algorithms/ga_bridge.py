@@ -109,8 +109,8 @@ class DNA:
         """
         f = partial(build_single_bridge, comb=self.comb, loc=self.loc, mirror_line=self.mirror_line, height=self.height)
         if self.parallel:
-            pool = Pool(2)
-            sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])], chunksize=self.pop.shape[0] // 2)
+            with Pool(PROCESSES) as pool:
+                sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])], chunksize=self.pop.shape[0] // PROCESSES)
         else:
             sol = list(map(f, self.pop[np.arange(0, self.pop.shape[0])]))
 
