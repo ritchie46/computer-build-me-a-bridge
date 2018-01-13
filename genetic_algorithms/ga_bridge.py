@@ -34,9 +34,9 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
         l1 = loc[n1]
         l2 = loc[n2]
 
-        ss.add_element([l1, l2])
+        ss.add_element([l1, l2], g=0.5)
         # add mirrored element
-        ss.add_element([mirror(l1, mirror_line), mirror(l2, mirror_line)])
+        ss.add_element([mirror(l1, mirror_line), mirror(l2, mirror_line)], g=0.5)
 
     # Placing the supports on the outer nodes, and the point load on the middle node.
     x_range = ss.nodes_range('x')
@@ -84,6 +84,9 @@ class DNA:
         :param cross_rate: (flt): Factor of the population that will exchange DNA.
         :param mutation_rate: (flt): Chance of random DNA mutation.
         """
+        self.normalized = False
+        self.max_fitness_n = 0
+        self.max_fitness_w = 0
         self.length = length
         self.height = height
         self.mirror_line = length // 2
@@ -122,15 +125,25 @@ class DNA:
 
         return w, length, n_elements
 
-    def get_fitness(self):
+    def get_fitness(self, ratio=(0.5, 1)):
         """
         Get the fitness score of the current generation.
+
+        :param ratio (tpl) Factor to multiply the unique fitness parts with. The first index is the fitness score
+        for the amount of elements. The second is the fitness score for deflection of the bridge.
         :return: (flt)
         """
         w, length, n_elements = self.build()
-        fitness = (length**2 / self.length) * (10 / np.log(2 * n_elements)) + \
-                   ((1.0 / (w / ((100 * length**3) / (48 * EI)))))**(1 / 2.7)
+        fitness_n = (length**2 / self.length) * (1 / np.log(n_elements))
+        fitness_w = np.sqrt((1.0 / (w / ((100 * length**3) / (48 * EI)))))
 
+        if not self.normalized:
+            self.normalized = True
+            # normalize the fitness scores
+            self.max_fitness_n = np.max(fitness_n)
+            self.max_fitness_w = np.max(fitness_w)
+
+        fitness = fitness_n * ratio[0] / self.max_fitness_n + fitness_w * ratio[1] / self.max_fitness_w
         fitness[np.argwhere(w == 0)] = 0
 
         return fitness
@@ -249,7 +262,7 @@ a = DNA(10, 5, 400, cross_rate=0.8, mutation_rate=0.02, parallel=True)
 
 
 base_dir = "/home/ritchie46/code/machine_learning/bridge/genetic_algorithms/img"
-name = "roll_lower_EI_h5"
+name = "lowEI_nrm_ftns_l10_h5_g0.5"
 os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
 
 # with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
@@ -258,7 +271,7 @@ os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
 #     a.cross_rate=0.7
 last_fitness = 0
 for i in range(1, 150):
-    fitness = a.get_fitness()
+    fitness = a.get_fitness(ratio=(1, 1))
     max_idx = np.argmax(fitness)
     best_ss = build_single_bridge(a.pop[max_idx], a.comb, a.loc, a.mirror_line, a.height, True)
     a.evolve(fitness)
