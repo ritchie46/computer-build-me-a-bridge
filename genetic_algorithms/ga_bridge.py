@@ -3,11 +3,68 @@ import os
 import pickle
 from scipy.spatial.distance import euclidean
 from multiprocessing import Pool
+import time
+from functools import partial
 from itertools import combinations, product
 import matplotlib.pyplot as plt
 import sys
 sys.path.append("/home/ritchie46/code/python/anaStruct")
 from anastruct.fem.system import SystemElements
+
+PROCESSES = 4
+
+
+def build_single_bridge(dna, comb, loc, mirror_line, height):
+    """
+    Build a single bridge structure.
+
+    :param dna: (array) DNA from population.
+    :param comb: (array) All possible combinations.
+    :param loc: (array) All possible locations.
+    :param mirror_line: (int) x value from the middle line.
+    :param height: (int) Maximum height of the bridge.
+    :return: (tpl)
+    """
+    ss = SystemElements()
+    on = np.argwhere(dna == 1)
+
+    for j in on.flatten():
+        n1, n2 = comb[j]
+        l1 = loc[n1]
+        l2 = loc[n2]
+
+        ss.add_element([l1, l2])
+        # add mirrored element
+        ss.add_element([mirror(l1, mirror_line), mirror(l2, mirror_line)])
+
+    # Placing the supports on the outer nodes, and the point load on the middle node.
+    x_range = ss.nodes_range('x')
+    if len(x_range) <= 2:
+        return None
+    else:
+        length = max(x_range)
+        start = min(x_range)
+        ids = list(ss.node_map.keys())
+
+        # Find the ids of the middle node for the force application, and the most right node for the support of the
+        # bridge
+        max_node_id = ids[np.argmax(x_range)]
+
+        middle_node_id = None
+        for j in range(height):
+            middle_node_id = ss.nearest_node("both", np.array([(length + start) / 2, height - j]))
+            if middle_node_id:
+                break
+
+        if middle_node_id is None:
+            middle_node_id = ids[np.argmin(np.abs(np.array(x_range) - (length + start) / 2))]
+
+        ss.add_support_hinged(1)
+        ss.add_support_hinged(max_node_id)
+        ss.point_load(middle_node_id, Fz=-100)
+
+        if ss.validate():
+            return ss, middle_node_id, length, on.size
 
 
 class DNA:
@@ -42,60 +99,24 @@ class DNA:
 
         self.builds = None
 
-    def build(self):
+    def build(self, parallel=True):
         """
         Build a bridge based from the current DNA. The bridge will be mirror symmetrical.
         """
-        builds = np.zeros(self.pop_size, dtype=object)
-        middle_node = np.zeros(self.pop_size, dtype=int)
-        all_lengths = np.zeros(self.pop_size, dtype=int)
-        n_elements = np.zeros(self.pop_size, dtype=int)
+        f = partial(build_single_bridge, comb=self.comb, loc=self.loc, mirror_line=self.mirror_line, height=self.height)
+        if parallel:
+            pool = Pool(2)
+            sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])], chunksize=self.pop.shape[0] // 2)
+        else:
+            sol = map(f, self.pop[np.arange(0, self.pop.shape[0])])
 
-        for i in range(self.pop.shape[0]):
-            ss = SystemElements()
-            on = np.argwhere(self.pop[i] == 1)
-
-            for j in on.flatten():
-                n1, n2 = self.comb[j]
-                l1 = self.loc[n1]
-                l2 = self.loc[n2]
-
-                ss.add_element([l1, l2])
-                # add mirror
-                ss.add_element([mirror(l1, self.mirror_line), mirror(l2, self.mirror_line)])
-
-            # Placing the supports on the outer nodes, and the point load on the middle node.
-            x_range = ss.nodes_range('x')
-            if len(x_range) <= 2:
-                builds[i] = None
-                all_lengths[i] = 0
-                n_elements[i] = 0
-            else:
-                length = max(x_range)
-                start = min(x_range)
-                ids = list(ss.node_map.keys())
-
-                max_node_id = ids[np.argmax(x_range)]
-
-                for j in range(self.height):
-                    middle_node_id = ss.nearest_node("both", np.array([(length + start) / 2, self.height - j]))
-                    if middle_node_id:
-                        break
-
-                if middle_node_id is None:
-                    middle_node_id = ids[np.argmin(np.abs(np.array(x_range) - (length + start) / 2))]
-
-                ss.add_support_hinged(1)
-                ss.add_support_hinged(max_node_id)
-                ss.point_load(middle_node_id, Fz=-100)
-
-                builds[i] = ss
-                middle_node[i] = middle_node_id
-                all_lengths[i] = length
-                n_elements[i] = on.size
+        middle_node = list(map(lambda x: x[1] if x is not None else None, sol))
+        length = list(map(lambda x: x[2] if x is not None else 0, sol))
+        n_elements = list(map(lambda x: x[3] if x is not None else None, sol))
+        builds = list(map(lambda x: x[0] if x is not None else None, sol))
 
         self.builds = builds
-        return builds, middle_node, all_lengths, n_elements
+        return sol, middle_node, length, n_elements
 
     def get_fitness(self):
         """
@@ -228,7 +249,7 @@ def mirror(v, m_x):
     return np.array([m_x + m_x - v[0], v[1]])
 
 
-a = DNA(10, 6, 20, cross_rate=0.8, mutation_rate=0.05)
+a = DNA(10, 6, 1000, cross_rate=0.8, mutation_rate=0.05)
 # plt.ion()
 
 
