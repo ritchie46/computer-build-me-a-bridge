@@ -11,11 +11,11 @@ import sys
 sys.path.append("/home/ritchie46/code/python/anaStruct")
 from anastruct.fem.system import SystemElements
 
-PROCESSES = 4
-EI = 1e2
+PROCESSES = 2
+EI = 1e1
 
 
-def build_single_bridge(dna, comb, loc, mirror_line, height):
+def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
     """
     Build a single bridge structure.
 
@@ -65,9 +65,12 @@ def build_single_bridge(dna, comb, loc, mirror_line, height):
         ss.point_load(middle_node_id, Fz=-100)
 
         if ss.validate():
+            if get_ss:
+                return ss
+
             ss.solve()
             w = np.abs(ss.get_node_displacements(middle_node_id)["uy"])
-            return ss, w, length, on.size
+            return w, length, on.size
 
 
 class DNA:
@@ -100,7 +103,6 @@ class DNA:
         # Population
         self.pop = np.random.randint(0, 2, size=(pop_size, len(self.comb)))
 
-        self.builds = None
         self.parallel = parallel
 
     def build(self):
@@ -110,16 +112,14 @@ class DNA:
         f = partial(build_single_bridge, comb=self.comb, loc=self.loc, mirror_line=self.mirror_line, height=self.height)
         if self.parallel:
             with Pool(PROCESSES) as pool:
-                sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])], chunksize=self.pop.shape[0] // PROCESSES)
+                sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])])
         else:
             sol = list(map(f, self.pop[np.arange(0, self.pop.shape[0])]))
 
-        w = np.array(list(map(lambda x: x[1] if x is not None else 1e6, sol)))
-        length = np.array(list(map(lambda x: x[2] if x is not None else 0, sol)))
-        n_elements = np.array(list(map(lambda x: x[3] if x is not None else 1e-6, sol)))
-        builds = list(map(lambda x: x[0] if x is not None else None, sol))
+        w = np.array(list(map(lambda x: x[0] if x is not None else 1e6, sol)))
+        length = np.array(list(map(lambda x: x[1] if x is not None else 0, sol)))
+        n_elements = np.array(list(map(lambda x: x[2] if x is not None else 1e-6, sol)))
 
-        self.builds = builds
         return w, length, n_elements
 
     def get_fitness(self):
@@ -129,7 +129,7 @@ class DNA:
         """
         w, length, n_elements = self.build()
         fitness = (length**2 / self.length) * (10 / np.log(2 * n_elements)) + \
-                  np.sqrt((1.0 / (w / ((100 * length**3) / (48 * EI)))))
+                   ((1.0 / (w / ((100 * length**3) / (48 * EI)))))**(1 / 2.7)
 
         fitness[np.argwhere(w == 0)] = 0
 
@@ -244,44 +244,39 @@ def mirror(v, m_x):
     return np.array([m_x + m_x - v[0], v[1]])
 
 
-a = DNA(10, 4, 350, cross_rate=0.8, mutation_rate=0.01)
+a = DNA(10, 5, 400, cross_rate=0.8, mutation_rate=0.02, parallel=True)
 # plt.ion()
 
 
 base_dir = "/home/ritchie46/code/machine_learning/bridge/genetic_algorithms/img"
-name = "roll_low_EI"
+name = "roll_lower_EI_h5"
 os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
-
-last_fitness = 0
 
 # with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
 #     a = pickle.load(f)
 #     a.mutation_rate = 0.01
 #     a.cross_rate=0.7
-
+last_fitness = 0
 for i in range(1, 150):
-    fitness= a.get_fitness()
+    fitness = a.get_fitness()
+    max_idx = np.argmax(fitness)
+    best_ss = build_single_bridge(a.pop[max_idx], a.comb, a.loc, a.mirror_line, a.height, True)
     a.evolve(fitness)
 
-    max_idx = np.argmax(fitness)
     print("gen", i, "max fitness", fitness[max_idx])
 
-    if i % 1 == 0:
-
-        plt.cla()
-
-        if last_fitness != fitness[max_idx]:
-            try:
-                fig = a.builds[max_idx].show_structure(show=False, verbosity=1)
-                plt.title(f"fitness = {round(fitness[max_idx], 3)}")
-                fig.savefig(os.path.join(base_dir, f"{name}", f"ga{i}.png"))
-                with open(os.path.join(base_dir, f"{name}", "save.pkl"), "wb") as f:
-                    pickle.dump(a, f)
-            except AttributeError:
-                pass
+    if last_fitness != fitness[max_idx]:
+        try:
+            fig = best_ss.show_structure(show=False, verbosity=1)
+            plt.title(f"fitness = {round(fitness[max_idx], 3)}")
+            fig.savefig(os.path.join(base_dir, f"{name}", f"ga{i}.png"))
+            with open(os.path.join(base_dir, f"{name}", "save.pkl"), "wb") as f:
+                pickle.dump(a, f)
+        except AttributeError:
+            pass
 
         last_fitness = fitness[max_idx]
-        # plt.pause(0.5)
+
 
 
 
