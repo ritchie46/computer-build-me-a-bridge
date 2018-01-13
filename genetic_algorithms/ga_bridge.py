@@ -12,6 +12,7 @@ sys.path.append("/home/ritchie46/code/python/anaStruct")
 from anastruct.fem.system import SystemElements
 
 PROCESSES = 4
+EI = 1e2
 
 
 def build_single_bridge(dna, comb, loc, mirror_line, height):
@@ -25,7 +26,7 @@ def build_single_bridge(dna, comb, loc, mirror_line, height):
     :param height: (int) Maximum height of the bridge.
     :return: (tpl)
     """
-    ss = SystemElements()
+    ss = SystemElements(EI=EI)
     on = np.argwhere(dna == 1)
 
     for j in on.flatten():
@@ -60,15 +61,17 @@ def build_single_bridge(dna, comb, loc, mirror_line, height):
             middle_node_id = ids[np.argmin(np.abs(np.array(x_range) - (length + start) / 2))]
 
         ss.add_support_hinged(1)
-        ss.add_support_hinged(max_node_id)
+        ss.add_support_roll(max_node_id)
         ss.point_load(middle_node_id, Fz=-100)
 
         if ss.validate():
-            return ss, middle_node_id, length, on.size
+            ss.solve()
+            w = np.abs(ss.get_node_displacements(middle_node_id)["uy"])
+            return ss, w, length, on.size
 
 
 class DNA:
-    def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.0001):
+    def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.0001, parallel=False):
         """
         Define a population with DNA that represents an element in a bridge.
 
@@ -98,46 +101,39 @@ class DNA:
         self.pop = np.random.randint(0, 2, size=(pop_size, len(self.comb)))
 
         self.builds = None
+        self.parallel = parallel
 
-    def build(self, parallel=True):
+    def build(self):
         """
         Build a bridge based from the current DNA. The bridge will be mirror symmetrical.
         """
         f = partial(build_single_bridge, comb=self.comb, loc=self.loc, mirror_line=self.mirror_line, height=self.height)
-        if parallel:
+        if self.parallel:
             pool = Pool(2)
             sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])], chunksize=self.pop.shape[0] // 2)
         else:
-            sol = map(f, self.pop[np.arange(0, self.pop.shape[0])])
+            sol = list(map(f, self.pop[np.arange(0, self.pop.shape[0])]))
 
-        middle_node = list(map(lambda x: x[1] if x is not None else None, sol))
-        length = list(map(lambda x: x[2] if x is not None else 0, sol))
-        n_elements = list(map(lambda x: x[3] if x is not None else None, sol))
+        w = np.array(list(map(lambda x: x[1] if x is not None else 1e6, sol)))
+        length = np.array(list(map(lambda x: x[2] if x is not None else 0, sol)))
+        n_elements = np.array(list(map(lambda x: x[3] if x is not None else 1e-6, sol)))
         builds = list(map(lambda x: x[0] if x is not None else None, sol))
 
         self.builds = builds
-        return sol, middle_node, length, n_elements
+        return w, length, n_elements
 
     def get_fitness(self):
         """
         Get the fitness score of the current generation.
         :return: (flt)
         """
-        builds, middle_node, fitness_l, fitness_n = self.build()
-        fitness_w = np.zeros(self.pop_size)
+        w, length, n_elements = self.build()
+        fitness = (length**2 / self.length) * (10 / np.log(2 * n_elements)) + \
+                  np.sqrt((1.0 / (w / ((100 * length**3) / (48 * EI)))))
 
-        for i in range(builds.shape[0]):
-            if validate_calc(builds[i]):
+        fitness[np.argwhere(w == 0)] = 0
 
-                w = np.abs(builds[i].get_node_displacements(middle_node[i])["uy"])
-
-                x_range = builds[i].nodes_range('x')
-                length = max(x_range) - min(x_range)
-                fitness_w[i] = 1.0 / (w / ((100 * length**3) / (48 * builds[i].EI)))
-
-        fitness_n = (400 / fitness_n)**2
-
-        return fitness_l**2 + fitness_n + fitness_w, fitness_w, fitness_n
+        return fitness
 
     def crossover(self, parent, pop):
         """
@@ -212,9 +208,8 @@ def validate_calc(ss):
     :return: (bool)
     """
     try:
-        a = ss.validate()
         displacement_matrix = ss.solve()
-        return not np.any(np.abs(displacement_matrix) > 1e9) and a
+        return not np.any(np.abs(displacement_matrix) > 1e9)
     except (np.linalg.LinAlgError, AttributeError):
         return False
 
@@ -249,35 +244,27 @@ def mirror(v, m_x):
     return np.array([m_x + m_x - v[0], v[1]])
 
 
-a = DNA(10, 6, 1000, cross_rate=0.8, mutation_rate=0.05)
+a = DNA(10, 4, 350, cross_rate=0.8, mutation_rate=0.01)
 # plt.ion()
 
 
-base_dir = "/home/ritchie46/code/machine_learning/vanilla-machine-learning/genetic_algorithms/img/"
-name = "n4"
-os.makedirs(os.path.join(base_dir, f"best_{name}"), exist_ok=1)
-
-# with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
-#     a = pickle.load(f)
-#     # a.mutation_rate = 0.1
-#     # a.cross_rate= 0.8
-#     f, w, n = a.get_fitness()
-#     f[np.argwhere(w == 0)] = 0
-#     idx = np.argmax(f)
-#     print(w[idx], n[idx])
-#     a.builds[idx].show_bending_moment()
+base_dir = "/home/ritchie46/code/machine_learning/bridge/genetic_algorithms/img"
+name = "roll_low_EI"
+os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
 
 last_fitness = 0
 
-for i in range(100, 150):
-    fitness, w, n = a.get_fitness()
+# with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
+#     a = pickle.load(f)
+#     a.mutation_rate = 0.01
+#     a.cross_rate=0.7
 
-    fitness[np.argwhere(w == 0)] = 0
-
+for i in range(1, 150):
+    fitness= a.get_fitness()
     a.evolve(fitness)
 
     max_idx = np.argmax(fitness)
-    print("gen", i, "max fitness", fitness[max_idx], "w", w[max_idx], "n", n[max_idx])
+    print("gen", i, "max fitness", fitness[max_idx])
 
     if i % 1 == 0:
 
@@ -287,14 +274,14 @@ for i in range(100, 150):
             try:
                 fig = a.builds[max_idx].show_structure(show=False, verbosity=1)
                 plt.title(f"fitness = {round(fitness[max_idx], 3)}")
-                fig.savefig(os.path.join(base_dir, f"best_{name}", f"ga{i}.png"))
+                fig.savefig(os.path.join(base_dir, f"{name}", f"ga{i}.png"))
+                with open(os.path.join(base_dir, f"{name}", "save.pkl"), "wb") as f:
+                    pickle.dump(a, f)
             except AttributeError:
                 pass
 
         last_fitness = fitness[max_idx]
         # plt.pause(0.5)
 
-    if i % 1 == 0:
-        with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "wb") as f:
-            pickle.dump(a, f)
+
 
