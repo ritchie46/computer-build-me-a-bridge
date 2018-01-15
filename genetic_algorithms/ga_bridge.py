@@ -176,7 +176,7 @@ class DNA:
         child[i] = np.random.randint(0, 2, size=i.shape)
         return child
 
-    def evolve(self, fitness):
+    def evolve_loop(self, fitness):
         """
         Evaluate a generation.
         :param fitness: (array) Fitness score of the current generation.
@@ -193,9 +193,9 @@ class DNA:
 
         self.pop = pop
 
-    def evolve_(self, fitness):
+    def evolve(self, fitness):
         pop = rank_selection(self.pop, fitness)
-        self.pop = crossover(pop, self.cross_rate)
+        self.pop = mutate(crossover(pop, self.cross_rate), self.mutation_rate)
 
 
 def crossover(pop, cross_rate):
@@ -220,6 +220,19 @@ def crossover(pop, cross_rate):
     selection[idx] = selection[shuffle_seed][idx]
     pop[selection_rows] = selection
 
+    return pop
+
+
+def mutate(pop, mutation_rate):
+    """
+    Do random mutations.
+    :param pop: (array)
+    :param mutation_rate: (flt)
+    :return: (array)
+    """
+    idx = np.where(np.random.rand(pop.shape[0], pop.shape[1]) < mutation_rate)
+    val = np.random.randint(0, 2, idx[0].shape[0])
+    pop[idx] = val
     return pop
 
 
