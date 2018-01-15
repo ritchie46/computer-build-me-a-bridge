@@ -12,7 +12,7 @@ sys.path.append("/home/ritchie46/code/python/anaStruct")
 from anastruct.fem.system import SystemElements
 
 PROCESSES = 2
-EI = 1e1
+EI = 15e3
 
 
 def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
@@ -26,7 +26,7 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
     :param height: (int) Maximum height of the bridge.
     :return: (tpl)
     """
-    ss = SystemElements(EI=EI)
+    ss = SystemElements(EI=EI, mesh=3)
     on = np.argwhere(dna == 1)
 
     for j in on.flatten():
@@ -34,9 +34,9 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
         l1 = loc[n1]
         l2 = loc[n2]
 
-        ss.add_element([l1, l2], g=0.5)
+        ss.add_element([l1, l2])
         # add mirrored element
-        ss.add_element([mirror(l1, mirror_line), mirror(l2, mirror_line)], g=0.5)
+        ss.add_element([mirror(l1, mirror_line), mirror(l2, mirror_line)])
 
     # Placing the supports on the outer nodes, and the point load on the middle node.
     x_range = ss.nodes_range('x')
@@ -61,7 +61,7 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
             middle_node_id = ids[np.argmin(np.abs(np.array(x_range) - (length + start) / 2))]
 
         ss.add_support_hinged(1)
-        ss.add_support_roll(max_node_id)
+        ss.add_support_hinged(max_node_id)
         ss.point_load(middle_node_id, Fz=-100)
 
         if ss.validate():
@@ -74,7 +74,7 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
 
 
 class DNA:
-    def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.0001, parallel=False):
+    def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.01, parallel=False):
         """
         Define a population with DNA that represents an element in a bridge.
 
@@ -83,6 +83,7 @@ class DNA:
         :param pop_size: (int) Size of the population.
         :param cross_rate: (flt): Factor of the population that will exchange DNA.
         :param mutation_rate: (flt): Chance of random DNA mutation.
+        :param parallel: (bool) Parallelize the computation.
         """
         self.normalized = False
         self.max_fitness_n = 0
@@ -192,6 +193,35 @@ class DNA:
 
         self.pop = pop
 
+    def evolve_(self, fitness):
+        pop = rank_selection(self.pop, fitness)
+        self.pop = crossover(pop, self.cross_rate)
+
+
+def crossover(pop, cross_rate):
+    """
+    Vectorized crossover
+
+    :param pop: (array)
+    :param cross_rate: (flt)
+    :return: (array)
+    """
+    # [bool] Rows that will crossover.
+    selection_rows = np.random.rand(pop.shape[0]) < cross_rate
+
+    selection = pop[selection_rows]
+    shuffle_seed = np.arange(selection.shape[0])
+    np.random.shuffle(shuffle_seed)
+
+    # 2d array with [rows of the (selected) population, bool]
+    cross_idx = np.array(np.round(np.random.rand(selection.shape[0], pop.shape[1])), dtype=np.bool)
+    idx = np.where(cross_idx)
+
+    selection[idx] = selection[shuffle_seed][idx]
+    pop[selection_rows] = selection
+
+    return pop
+
 
 def rank_selection(pop, fitness):
     """
@@ -256,13 +286,12 @@ def mirror(v, m_x):
 
     return np.array([m_x + m_x - v[0], v[1]])
 
-
-a = DNA(10, 5, 400, cross_rate=0.8, mutation_rate=0.02, parallel=True)
-# plt.ion()
+np.random.seed(1)
+a = DNA(10, 10, 200, cross_rate=0.8, mutation_rate=0.02, parallel=0)
 
 
 base_dir = "/home/ritchie46/code/machine_learning/bridge/genetic_algorithms/img"
-name = "lowEI_nrm_ftns_l10_h5_g0.5"
+name = "test"
 os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
 
 # with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
@@ -271,11 +300,12 @@ os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
 #     a.cross_rate=0.7
 last_fitness = 0
 for i in range(1, 150):
+    t0 = time.time()
     fitness = a.get_fitness(ratio=(1, 1))
     max_idx = np.argmax(fitness)
     best_ss = build_single_bridge(a.pop[max_idx], a.comb, a.loc, a.mirror_line, a.height, True)
-    a.evolve(fitness)
-
+    a.evolve_(fitness)
+    print(time.time() - t0)
     print("gen", i, "max fitness", fitness[max_idx])
 
     if last_fitness != fitness[max_idx]:
