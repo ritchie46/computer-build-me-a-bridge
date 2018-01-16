@@ -110,7 +110,7 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
 
 class DNA:
     def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.01, parallel=False,
-                 unit="deflection", EI=15e3, roll=True):
+                 unit="deflection", EI=15e3, roll=True, support_btm=True, fixed_n=None):
         """
         Define a population with DNA that represents an element in a bridge.
 
@@ -124,10 +124,12 @@ class DNA:
                                                                                  tension, moment)
         :param EI: (flt) Bending stiffness of the structure.
         :param roll: (bool) Add a support that is free in x.
+        :param support_btm: (bool) Place the support at the bottom of the grid.
+        :param fixed_n: (int) Set a maximum limit to the elements build.
         """
         self.normalized = False
         self.max_fitness_n = 0
-        self.max_fitness_w = 0
+        self.max_fitness_u = 0
         self.length = length
         self.height = height
         self.mirror_line = length // 2
@@ -151,13 +153,15 @@ class DNA:
         self.parallel = parallel
         self.EI = EI
         self.roll = roll
+        self.support_btm = support_btm
+        self.fixed_n = fixed_n
 
     def build(self):
         """
         Build a bridge based from the current DNA. The bridge will be mirror symmetrical.
         """
         f = partial(build_single_bridge, comb=self.comb, loc=self.loc, mirror_line=self.mirror_line, height=self.height,
-                    EI=self.EI, roll=self.roll)
+                    EI=self.EI, roll=self.roll, support_btm=self.support_btm)
         if self.parallel:
             with Pool(PROCESSES) as pool:
                 sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])])
@@ -178,6 +182,7 @@ class DNA:
         for the amount of elements. The second is the fitness score for deflection of the bridge.
         :return: (flt)
         """
+
         unit, length, n_elements = self.build()
         fitness_n = 1 / np.log(n_elements)
 
@@ -185,17 +190,20 @@ class DNA:
             fitness_u = np.sqrt((1.0 / (unit / ((100 * length**3) / (48 * self.EI)))))
         else:
             fitness_u = 1 / unit
-            fitness_u[fitness_u < 0] = 1
+            fitness_u[fitness_u < 0] = 100
+
         if not self.normalized:
             self.normalized = True
             # normalize the fitness scores
             self.max_fitness_n = np.max(fitness_n)
-            self.max_fitness_w = np.max(fitness_u)
+            self.max_fitness_u = np.max(fitness_u)
 
-        fitness = fitness_n * ratio[0] / self.max_fitness_n + fitness_u * ratio[1] / self.max_fitness_w
+        fitness = fitness_n * ratio[0] / self.max_fitness_n + fitness_u * ratio[1] / self.max_fitness_u
         fitness[np.argwhere(length < self.length)] = 0
         if self.unit == "deflection":
             fitness[np.argwhere(unit == 0)] = 0
+        if self.fixed_n is not None:
+            fitness[np.where(n_elements > self.fixed_n)] = 0
 
         return fitness
 
@@ -331,7 +339,8 @@ def mirror(v, m_x):
 
 
 np.random.seed(1)
-a = DNA(6, 10, 300, cross_rate=0.8, mutation_rate=0.02, parallel=1, unit="axial compression")
+a = DNA(6, 8, 150, cross_rate=0.8, mutation_rate=0.02, parallel=1, unit="axial compression", roll=False,
+        support_btm=False, fixed_n=55)
 
 
 base_dir = "/home/ritchie46/code/machine_learning/bridge/genetic_algorithms/img"
@@ -351,14 +360,13 @@ os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
 # best_ss.solve()
 # best_ss.show_axial_force()
 
-
-
 last_fitness = 0
 for i in range(1, 150):
     t0 = time.time()
-    fitness = a.get_fitness(ratio=(1, 1))
+    fitness = a.get_fitness(ratio=(2, 1))
     max_idx = np.argmax(fitness)
-    best_ss = build_single_bridge(a.pop[max_idx], a.comb, a.loc, a.mirror_line, a.height, True)
+    best_ss = build_single_bridge(a.pop[max_idx], a.comb, a.loc, a.mirror_line, a.height, True,
+                                  support_btm=a.support_btm, roll=a.roll)
     a.evolve(fitness)
     print(time.time() - t0)
     print("gen", i, "max fitness", fitness[max_idx])
