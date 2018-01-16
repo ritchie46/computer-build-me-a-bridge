@@ -45,6 +45,7 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
 
     # Placing the supports on the outer nodes, and the point load on the middle node.
     x_range = ss.nodes_range('x')
+
     if len(x_range) <= 2:
         return None
     else:
@@ -135,7 +136,8 @@ class DNA:
         self.mutation_rate = mutation_rate
         # Assumed that length > height
         # product: permutations with replacement.
-        self.loc = np.array(list(filter(lambda x: x[1] <= height, product(range(self.mirror_line + 1), repeat=2))))
+        self.loc = np.array(list(filter(lambda x: x[1] <= height and x[0] <= self.mirror_line,
+                                        product(range(max(self.height + 1, self.mirror_line)), repeat=2))))
 
         # Index tuples of possible connections
         # filters all the vector combinations with an euclidean distance < 1.5.
@@ -329,7 +331,7 @@ def mirror(v, m_x):
 
 
 np.random.seed(1)
-a = DNA(10, 6, 300, cross_rate=0.8, mutation_rate=0.02, parallel=0, unit="axial compression")
+a = DNA(6, 10, 300, cross_rate=0.8, mutation_rate=0.02, parallel=1, unit="axial compression")
 
 
 base_dir = "/home/ritchie46/code/machine_learning/bridge/genetic_algorithms/img"
