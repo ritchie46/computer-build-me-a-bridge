@@ -12,11 +12,10 @@ sys.path.append("/home/ritchie46/code/python/anaStruct")
 from anastruct.fem.system import SystemElements
 
 PROCESSES = 2
-EI = 15e3
 
 
 def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
-                        unit="deflection"):
+                        unit="deflection", EI=15e3, roll=True, support_btm=False):
     """
     Build a single bridge structure.
 
@@ -27,6 +26,9 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
     :param height: (int) Maximum height of the bridge.
     :param unit: (str) Make this important in the fitness score evaluation. {deflection, axial compression,
                                                                          tension, moment)
+    :param EI: (flt) Bending stiffness of the structure.
+    :param roll: (bool) Add a support that is free in x.
+    :param support_btm: (bool) Place the support at the bottom of the grid.
     :return: (tpl)
     """
     ss = SystemElements(EI=EI, mesh=3)
@@ -54,7 +56,6 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
         # bridge
         max_node_id = ids[np.argmax(x_range)]
 
-        middle_node_id = None
         for j in range(height):
             middle_node_id = ss.nearest_node("both", np.array([(length + start) / 2, height - j]))
             if middle_node_id:
@@ -63,8 +64,28 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
         if middle_node_id is None:
             middle_node_id = ids[np.argmin(np.abs(np.array(x_range) - (length + start) / 2))]
 
-        ss.add_support_hinged(1)
-        ss.add_support_hinged(max_node_id)
+        # Find the support ids in case the supports should be place in the middle.
+        if support_btm:
+            left_node_id = 1
+            right_node_id = max_node_id
+        else:
+            idx = np.argsort(np.abs(np.arange(height) - height // 2))
+
+            for j in idx:
+                left_node_id = ss.nearest_node("both", np.array([start, j]))
+                if left_node_id:
+                    break
+            for j in idx:
+                right_node_id = ss.nearest_node("both", np.array([start + length, j]))
+                if right_node_id:
+                    break
+
+        # Add support conditions
+        ss.add_support_hinged(left_node_id)
+        if roll:
+            ss.add_support_roll(right_node_id)
+        else:
+            ss.add_support_hinged(right_node_id)
         ss.point_load(middle_node_id, Fz=-100)
 
         if ss.validate():
@@ -74,21 +95,21 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
             ss.solve()
 
             if unit == "deflection":
-                w = np.abs(ss.get_node_displacements(middle_node_id)["uy"])
+                val = np.abs(ss.get_node_displacements(middle_node_id)["uy"])
             elif unit == "axial compression":
-                w = np.abs(np.min(ss.get_element_result_range("axial")))
+                val = -np.min(ss.get_element_result_range("axial"))
             elif unit == "tension":
-                w = np.abs(np.max(ss.get_element_result_range("axial")))
+                val = np.max(ss.get_element_result_range("axial"))
             elif unit == "moment":
-                w = np.abs((ss.get_element_result_range("moment")))
+                val = np.abs((ss.get_element_result_range("moment")))
             else:
                 raise LookupError("Unit is not defined")
-            return w, length, on.size
+            return val, length, on.size
 
 
 class DNA:
     def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.01, parallel=False,
-                 unit="deflection"):
+                 unit="deflection", EI=15e3, roll=True):
         """
         Define a population with DNA that represents an element in a bridge.
 
@@ -100,6 +121,8 @@ class DNA:
         :param parallel: (bool) Parallelize the computation.
         :param unit: (str) Make this important in the fitness score evaluation. {deflection, axial compression,
                                                                                  tension, moment)
+        :param EI: (flt) Bending stiffness of the structure.
+        :param roll: (bool) Add a support that is free in x.
         """
         self.normalized = False
         self.max_fitness_n = 0
@@ -124,23 +147,26 @@ class DNA:
         self.pop = np.random.randint(0, 2, size=(pop_size, len(self.comb)))
         self.unit = unit
         self.parallel = parallel
+        self.EI = EI
+        self.roll = roll
 
     def build(self):
         """
         Build a bridge based from the current DNA. The bridge will be mirror symmetrical.
         """
-        f = partial(build_single_bridge, comb=self.comb, loc=self.loc, mirror_line=self.mirror_line, height=self.height)
+        f = partial(build_single_bridge, comb=self.comb, loc=self.loc, mirror_line=self.mirror_line, height=self.height,
+                    EI=self.EI, roll=self.roll)
         if self.parallel:
             with Pool(PROCESSES) as pool:
                 sol = pool.map(f, self.pop[np.arange(0, self.pop.shape[0])])
         else:
             sol = list(map(f, self.pop[np.arange(0, self.pop.shape[0])]))
 
-        w = np.array(list(map(lambda x: x[0] if x is not None else 1e6, sol)))
+        unit = np.array(list(map(lambda x: x[0] if x is not None else 1e6, sol)))
         length = np.array(list(map(lambda x: x[1] if x is not None else 0, sol)))
         n_elements = np.array(list(map(lambda x: x[2] if x is not None else 1e-6, sol)))
 
-        return w, length, n_elements
+        return unit, length, n_elements
 
     def get_fitness(self, ratio=(0.5, 1)):
         """
@@ -154,9 +180,10 @@ class DNA:
         fitness_n = 1 / np.log(n_elements)
 
         if self.unit == "deflection":
-            fitness_u = np.sqrt((1.0 / (unit / ((100 * length**3) / (48 * EI)))))
+            fitness_u = np.sqrt((1.0 / (unit / ((100 * length**3) / (48 * self.EI)))))
         else:
-            fitness_u = unit
+            fitness_u = 1 / unit
+            fitness_u[fitness_u < 0] = 1
         if not self.normalized:
             self.normalized = True
             # normalize the fitness scores
@@ -300,18 +327,30 @@ def mirror(v, m_x):
 
     return np.array([m_x + m_x - v[0], v[1]])
 
+
 np.random.seed(1)
-a = DNA(10, 10, 200, cross_rate=0.8, mutation_rate=0.02, parallel=0)
+a = DNA(10, 6, 300, cross_rate=0.8, mutation_rate=0.02, parallel=0, unit="axial compression")
 
 
 base_dir = "/home/ritchie46/code/machine_learning/bridge/genetic_algorithms/img"
 name = "test"
 os.makedirs(os.path.join(base_dir, f"{name}"), exist_ok=1)
 
-# with open(os.path.join(base_dir, f"best_{name}", "save.pkl"), "rb") as f:
+
+# with open(os.path.join(base_dir, f"{name}", "save.pkl"), "rb") as f:
 #     a = pickle.load(f)
-#     a.mutation_rate = 0.01
-#     a.cross_rate=0.7
+#
+#
+# print(a)
+# fitness = a.get_fitness(ratio=(1, 1))
+# max_idx = np.argmax(fitness)
+# best_ss = build_single_bridge(a.pop[max_idx], a.comb, a.loc, a.mirror_line, a.height, True)
+#
+# best_ss.solve()
+# best_ss.show_axial_force()
+
+
+
 last_fitness = 0
 for i in range(1, 150):
     t0 = time.time()
@@ -325,7 +364,10 @@ for i in range(1, 150):
     if last_fitness != fitness[max_idx]:
         try:
             fig = best_ss.show_structure(show=False, verbosity=1)
-            plt.title(f"fitness = {round(fitness[max_idx], 3)}")
+            best_ss.solve()
+            # fig = best_ss.show_axial_force(show=False)
+            plt.title(f"fitness = {round(fitness[max_idx], 3)} {np.min(best_ss.get_element_result_range('axial'))}")
+            # plt.show()
             fig.savefig(os.path.join(base_dir, f"{name}", f"ga{i}.png"))
             with open(os.path.join(base_dir, f"{name}", "save.pkl"), "wb") as f:
                 pickle.dump(a, f)
