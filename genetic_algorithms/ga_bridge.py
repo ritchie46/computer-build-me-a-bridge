@@ -15,7 +15,8 @@ PROCESSES = 2
 EI = 15e3
 
 
-def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
+def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False,
+                        unit="deflection"):
     """
     Build a single bridge structure.
 
@@ -24,6 +25,8 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
     :param loc: (array) All possible locations.
     :param mirror_line: (int) x value from the middle line.
     :param height: (int) Maximum height of the bridge.
+    :param unit: (str) Make this important in the fitness score evaluation. {deflection, axial compression,
+                                                                         tension, moment)
     :return: (tpl)
     """
     ss = SystemElements(EI=EI, mesh=3)
@@ -69,12 +72,23 @@ def build_single_bridge(dna, comb, loc, mirror_line, height, get_ss=False):
                 return ss
 
             ss.solve()
-            w = np.abs(ss.get_node_displacements(middle_node_id)["uy"])
+
+            if unit == "deflection":
+                w = np.abs(ss.get_node_displacements(middle_node_id)["uy"])
+            elif unit == "axial compression":
+                w = np.abs(np.min(ss.get_element_result_range("axial")))
+            elif unit == "tension":
+                w = np.abs(np.max(ss.get_element_result_range("axial")))
+            elif unit == "moment":
+                w = np.abs((ss.get_element_result_range("moment")))
+            else:
+                raise LookupError("Unit is not defined")
             return w, length, on.size
 
 
 class DNA:
-    def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.01, parallel=False):
+    def __init__(self, length, height, pop_size=600, cross_rate=0.8, mutation_rate=0.01, parallel=False,
+                 unit="deflection"):
         """
         Define a population with DNA that represents an element in a bridge.
 
@@ -84,6 +98,8 @@ class DNA:
         :param cross_rate: (flt): Factor of the population that will exchange DNA.
         :param mutation_rate: (flt): Chance of random DNA mutation.
         :param parallel: (bool) Parallelize the computation.
+        :param unit: (str) Make this important in the fitness score evaluation. {deflection, axial compression,
+                                                                                 tension, moment)
         """
         self.normalized = False
         self.max_fitness_n = 0
@@ -106,7 +122,7 @@ class DNA:
 
         # Population
         self.pop = np.random.randint(0, 2, size=(pop_size, len(self.comb)))
-
+        self.unit = unit
         self.parallel = parallel
 
     def build(self):
@@ -134,18 +150,23 @@ class DNA:
         for the amount of elements. The second is the fitness score for deflection of the bridge.
         :return: (flt)
         """
-        w, length, n_elements = self.build()
-        fitness_n = (length**2 / self.length) * (1 / np.log(n_elements))
-        fitness_w = np.sqrt((1.0 / (w / ((100 * length**3) / (48 * EI)))))
+        unit, length, n_elements = self.build()
+        fitness_n = 1 / np.log(n_elements)
 
+        if self.unit == "deflection":
+            fitness_u = np.sqrt((1.0 / (unit / ((100 * length**3) / (48 * EI)))))
+        else:
+            fitness_u = unit
         if not self.normalized:
             self.normalized = True
             # normalize the fitness scores
             self.max_fitness_n = np.max(fitness_n)
-            self.max_fitness_w = np.max(fitness_w)
+            self.max_fitness_w = np.max(fitness_u)
 
-        fitness = fitness_n * ratio[0] / self.max_fitness_n + fitness_w * ratio[1] / self.max_fitness_w
-        fitness[np.argwhere(w == 0)] = 0
+        fitness = fitness_n * ratio[0] / self.max_fitness_n + fitness_u * ratio[1] / self.max_fitness_w
+        fitness[np.argwhere(length < self.length)] = 0
+        if self.unit == "deflection":
+            fitness[np.argwhere(unit == 0)] = 0
 
         return fitness
 
@@ -225,7 +246,7 @@ def crossover(pop, cross_rate):
 
 def mutate(pop, mutation_rate):
     """
-    Do random mutations.
+    Vectorized random mutations.
     :param pop: (array)
     :param mutation_rate: (flt)
     :return: (array)
@@ -254,26 +275,6 @@ def rank_selection(pop, fitness):
     # Make a selection based on their ranking.
     idx = np.random.choice(np.arange(pop.shape[0]), size=pop.shape[0], replace=True, p=rank_p / np.sum(rank_p))
     return pop[idx]
-
-
-def validate_calc(ss):
-    """
-    Validate if this is a proper structure.
-
-    :param ss: (SystemElement)
-    :return: (bool)
-    """
-    try:
-        displacement_matrix = ss.solve()
-        return not np.any(np.abs(displacement_matrix) > 1e9)
-    except (np.linalg.LinAlgError, AttributeError):
-        return False
-
-
-def normalize(x):
-    if np.allclose(x, x[0]):
-        return np.ones(x.shape)*0.1
-    return (x - np.min(x)) / (np.max(x) - np.min(x))
 
 
 def choose_fit_parent(pop):
@@ -317,7 +318,7 @@ for i in range(1, 150):
     fitness = a.get_fitness(ratio=(1, 1))
     max_idx = np.argmax(fitness)
     best_ss = build_single_bridge(a.pop[max_idx], a.comb, a.loc, a.mirror_line, a.height, True)
-    a.evolve_(fitness)
+    a.evolve(fitness)
     print(time.time() - t0)
     print("gen", i, "max fitness", fitness[max_idx])
 
