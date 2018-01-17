@@ -3,12 +3,9 @@ import os
 import pickle
 from scipy.spatial.distance import euclidean
 from multiprocessing import Pool
-import time
 from functools import partial
 from itertools import combinations, product
 import matplotlib.pyplot as plt
-import sys
-sys.path.append("/home/ritchie46/code/python/anaStruct")
 from anastruct.fem.system import SystemElements
 
 
@@ -291,7 +288,7 @@ def mirror(v, m_x):
 
 
 if __name__ == "__main__":
-    base_dir = "./"
+    base_dir = "./genetic_algorithms"
     PROCESSES = 2  # number of threads
     PARALLEL = False  # Parallel processing.
 
@@ -328,7 +325,3 @@ if __name__ == "__main__":
                 pass
 
             last_fitness = fitness[max_idx]
-
-
-
-
