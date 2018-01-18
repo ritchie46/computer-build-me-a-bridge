@@ -161,6 +161,16 @@ class DNA:
         self.support_btm = support_btm
         self.fixed_n = fixed_n
 
+    def show_grid(self, ratio_n_u=(0.5, 1)):
+        ss = build_single_bridge(np.ones(len(self.comb)), self.comb, self.loc, self.height, get_ss=True,
+                                 roll=self.roll, support_btm=self.support_btm)
+        unit, length, n_elements = build_single_bridge(np.ones(len(self.comb)), self.comb, self.loc, self.height,
+                                    roll=self.roll, support_btm=self.support_btm)
+
+        print("Fitness:", self.evaluate_fitness(np.array([unit]), np.array([length]),
+                                                np.array([n_elements]), ratio_n_u))
+        ss.show_structure(verbosity=1)
+
     def build(self):
         """
         Build a bridge based from the current DNA. The bridge will be mirror symmetrical.
@@ -179,16 +189,7 @@ class DNA:
 
         return unit, length, n_elements
 
-    def get_fitness(self, ratio=(0.5, 1)):
-        """
-        Get the fitness score of the current generation.
-
-        :param ratio (tpl) Factor to multiply the unique fitness parts with. The first index is the fitness score
-        for the amount of elements. The second is the fitness score for deflection of the bridge.
-        :return: (flt)
-        """
-
-        unit, length, n_elements = self.build()
+    def evaluate_fitness(self, unit, length, n_elements, ratio_n_u):
         fitness_n = 1 / np.log(n_elements)
         fitness_l = length**2
 
@@ -204,9 +205,9 @@ class DNA:
             self.max_fitness_n = np.max(fitness_n)
             self.max_fitness_u = np.max(fitness_u)
 
-        fitness = fitness_n * ratio[0] / self.max_fitness_n + \
-                  fitness_u * ratio[1] / self.max_fitness_u + \
-                  fitness_l / self.length**2
+        fitness = fitness_n * ratio_n_u[0] / self.max_fitness_n + \
+                  fitness_u * ratio_n_u[1] / self.max_fitness_u + \
+                  fitness_l / self.length ** 2
 
         if self.unit == "deflection":
             fitness[unit == 0] = 0
@@ -214,6 +215,19 @@ class DNA:
             fitness[n_elements > self.fixed_n] = 0
 
         return fitness
+
+    def get_fitness(self, ratio_n_u=(0.5, 1)):
+        """
+        Get the fitness score of the current generation.
+
+        :param ratio_n_u (tpl) Factor to multiply the unique fitness parts with. The first index is the fitness score
+        for the amount of elements. The second is the fitness score for deflection of the bridge.
+        :return: (flt)
+        """
+
+        unit, length, n_elements = self.build()
+
+        return self.evaluate_fitness(unit, length, n_elements, ratio_n_u)
 
     def evolve(self, fitness):
         pop = rank_selection(self.pop, fitness)
@@ -297,18 +311,18 @@ if __name__ == "__main__":
 
     # 15e3 is a realistic bending stiffness compared to the prefixed EA (axial stiffness).
     # If you want to simulate low bending stiffnesses, go for values of 1e2 - 1e3.
-    EI = 15e3
-    roll = False  # One support can freely move in the x direction.
-    name = "grid_10_1"
-
-    population = DNA(10, 1, 250, cross_rate=0.8, mutation_rate=0.01, parallel=PARALLEL, unit="deflection", roll=roll,
-                     support_btm=True, fixed_n=None, EI=1e2)
-
+    EI = 1e1
+    roll = True  # One support can freely move in the x direction.
+    name = "grid_10_1_4(1.5,1)_roll"
     os.makedirs(os.path.join(base_dir, "img", name), exist_ok=1)
+
+    np.random.seed(1)
+    population = DNA(10, 1, 250, cross_rate=0.8, mutation_rate=0.01, parallel=PARALLEL, unit="deflection", roll=roll,
+                     support_btm=True, fixed_n=None, EI=EI)
 
     last_fitness = 0
     for i in range(1, 50):
-        fitness = population.get_fitness(ratio=(1, 1))
+        fitness = population.get_fitness(ratio_n_u=(2, 1))
         max_idx = np.argmax(fitness)
         best_ss = build_single_bridge(population.pop[max_idx], population.comb, population.loc,
                                       population.height, True,

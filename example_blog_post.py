@@ -299,7 +299,7 @@ if __name__ == "__main__":
     name = "grid_10_1"
 
     population = DNA(10, 1, 250, cross_rate=0.8, mutation_rate=0.01, parallel=PARALLEL, unit="deflection", roll=roll,
-                     support_btm=True, fixed_n=None, EI=1e2)
+                     support_btm=True, fixed_n=None, EI=EI)
 
     os.makedirs(os.path.join(base_dir, "img", name), exist_ok=1)
 
