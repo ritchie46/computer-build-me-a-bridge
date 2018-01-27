@@ -5,6 +5,14 @@ import torch.nn.functional as F
 
 class Model(torch.nn.Module):
     def __init__(self, n_in, n_out, hidden_layers=1, hidden_neurons=(64,)):
+        """
+        Make a multi-layer-perceptron.
+
+        :param n_in: (int) Input of the model.
+        :param n_out: (int) Output of the model.
+        :param hidden_layers: (int) No. of hidden layers.
+        :param hidden_neurons: (tpl) Hidden neuron per hidden layer.
+        """
         super(Model, self).__init__()
         self.dense_in = nn.Linear(n_in, hidden_neurons[0])
         self.hidden = []
