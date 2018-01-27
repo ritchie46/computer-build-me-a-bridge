@@ -31,6 +31,17 @@ def perturbate(model, seed, sigma=0.05):
 
     return new_model, anti_model
 
+
+def generate_seeds_and_models(model, sigma):
+    """
+    Return a seed and 2 modified models
+    :param model: (Model)
+    :return: (int, (Model, Model)
+    """
+    seed = np.random.randint(2**30)
+    return seed, perturbate(model, sigma)
+
+
 m = Model(2, 10, 1)
 
 perturbate(m, 1, 0.05)
