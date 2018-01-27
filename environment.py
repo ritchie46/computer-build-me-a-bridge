@@ -1,6 +1,8 @@
 import numpy as np
 import sys
-sys.path.append("/home/ritchie46/code/python/anaStruct")
+from itertools import combinations, product
+from scipy.spatial.distance import euclidean
+sys.path.append("/home/ritchie46/code/anaStruct")
 from anastruct.fem.system import SystemElements
 
 
@@ -17,7 +19,7 @@ def mirror(v, m_x):
 
 
 def build_single_bridge(dna, comb, loc, height, get_ss=False,
-                        unit="deflection", EI=15e3, roll=True, support_btm=False):
+                        unit="deflection", EI=15e3, roll=True, support_btm=False, return_height=False):
     """
     Build a single bridge structure.
 
@@ -30,7 +32,7 @@ def build_single_bridge(dna, comb, loc, height, get_ss=False,
     :param EI: (flt) Bending stiffness of the structure.
     :param roll: (bool) Add a support that is free in x.
     :param support_btm: (bool) Place the support at the bottom of the grid.
-    :return: (tpl)
+    :return: (unit, length, number of elements)
     """
     ss = SystemElements(EI=EI, mesh=3)
     on = np.argwhere(dna == 1).flatten()
@@ -114,4 +116,20 @@ def build_single_bridge(dna, comb, loc, height, get_ss=False,
                 val = np.abs((ss.get_element_result_range("moment")))
             else:
                 raise LookupError("Unit is not defined")
+
+            if return_height:
+                return val, length - start, on.size, max(ss.nodes_range('y'))
+
             return val, length - start, on.size
+
+
+def det_grid_positions(length, height):
+    loc = np.array(list(filter(lambda x: x[1] <= height and x[0] <= length // 2,
+                                    product(range(max(height + 1, length // 2)), repeat=2))))
+
+    # Index tuples of possible connections
+    # filters all the vector combinations with an euclidean distance < 1.5.
+    # dna
+    comb = np.array(list(filter(lambda x: euclidean(loc[x[1]], loc[x[0]]) < 1.5,
+                                     combinations(range(len(loc)), 2))))
+    return loc, comb
