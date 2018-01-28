@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 import os
 
 
-
 def perturbate(model, seed, sigma=0.05):
     """
     Create two new models. And modify both in opposite direction.
