@@ -19,7 +19,7 @@ def mirror(v, m_x):
 
 
 def build_single_bridge(dna, comb, loc, height, get_ss=False,
-                        unit="deflection", EI=15e3, roll=True, support_btm=False, return_height=False):
+                        unit="deflection", EI=15e3, roll=True, support_btm=False, es=False):
     """
     Build a single bridge structure.
 
@@ -32,6 +32,7 @@ def build_single_bridge(dna, comb, loc, height, get_ss=False,
     :param EI: (flt) Bending stiffness of the structure.
     :param roll: (bool) Add a support that is free in x.
     :param support_btm: (bool) Place the support at the bottom of the grid.
+    :param es: (bool) Special code for Evolution Strategies.
     :return: (unit, length, number of elements)
     """
     ss = SystemElements(EI=EI, mesh=3)
@@ -94,9 +95,9 @@ def build_single_bridge(dna, comb, loc, height, get_ss=False,
 
         # Add support conditions
         ss.add_support_hinged(left_node_id)
-        if roll:
+        if roll and right_node_id is not None:
             ss.add_support_roll(right_node_id)
-        else:
+        elif right_node_id is not None:
             ss.add_support_hinged(right_node_id)
         ss.point_load(middle_node_id, Fz=-100)
 
@@ -117,12 +118,12 @@ def build_single_bridge(dna, comb, loc, height, get_ss=False,
             else:
                 raise LookupError("Unit is not defined")
 
-            if return_height:
+            if es:
                 return val, length - start, on.size, max(ss.nodes_range('y'))
 
             return val, length - start, on.size
 
-
+ 
 def det_grid_positions(length, height):
     loc = np.array(list(filter(lambda x: x[1] <= height and x[0] <= length // 2,
                                     product(range(max(height + 1, length // 2)), repeat=2))))

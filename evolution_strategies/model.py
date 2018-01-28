@@ -31,7 +31,7 @@ class Model(torch.nn.Module):
         for f in self.hidden:
             x = F.relu(f(x))
 
-        return self.dense_out(x)
+        return F.sigmoid(self.dense_out(x))
 
     def es_params(self):
         """
