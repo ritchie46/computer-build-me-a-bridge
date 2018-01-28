@@ -4,6 +4,9 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 import torch.multiprocessing as mp
+from torch.legacy.optim import adam
+import matplotlib.pyplot as plt
+import os
 
 
 
@@ -111,16 +114,97 @@ def sample_input(h, l):
     :param l: (int) Max length of the grid.
     :return: (array) [[stiff, h, l]]
     """
-    h = np.random.randint(h + 1)
-    l = np.random.randint(l + 1)
+
+    h = np.random.randint(h // 3, h + 1)
+    l = np.random.randint(l // 3, l + 1)
     stiff = np.random.randint(2)
-    return np.array([stiff, h, l])
+
+    while True:
+        yield np.array([stiff, h, l])
 
 
-def train_loop(model, dn, iterations=100000, pop_size=40, sigma=0.05):
+def rank_fitness(fitness):
+    rank_p = 1 / np.arange(1, fitness.shape[0] + 1)
+    order = np.argsort(fitness)[::-1]
+    return rank_p[order]
+
+
+def gradient_update(model, fitness, seeds, neg_list, original_fitness, sigma=0.05, plot=False,
+                    dn="img"):
+
+    batch_size = len(fitness)
+    assert len(seeds) == batch_size
+
+    rank = rank_fitness(fitness)
+    original_rank = np.argwhere(np.sort(fitness)[::-1] == original_fitness)[0][0] + 1
+
+    print(f"Original rank: {original_rank} out of {fitness.shape[0]}. Score: {original_fitness}")
+
+    if plot:
+        os.makedirs("dn", exist_ok=True)
+        AVG_F.append(np.mean(fitness))
+        CURR_F.append(original_fitness)
+        MAX_F.append(np.max(fitness))
+
+        plt_avg = plt.plot(EPISODES, AVG_F, label="Average", color="g")
+        plt_curr = plt.plot(EPISODES, CURR_F, label="Current", color="b")
+        plt_max = plt.plot(EPISODES, MAX_F, label="Max", color="r")
+
+        plt.ylabel('fitness')
+        plt.xlabel('episode num')
+        #plt.legend()
+
+        fig1 = plt.gcf()
+
+        plt.draw()
+        fig1.savefig(dn + '/graph.png', dpi=100)
+
+    # Optimize using Adam
+    global_gradients = None  # Final gradients for original model
+    for i in range(fitness.shape[0]):
+        # Make the same noise using the seeds
+        np.random.seed(seeds[i])
+        factor = -1 if neg_list[i] else 1
+        rank_f = rank[i]
+
+        local_gradients = []  # gradients based on this model (mini batch)
+
+        for k, v in model.es_params():  # loop over weights and biases of all layers
+            eps = np.random.normal(0, 1, v.size())
+            grad = torch.from_numpy(sigma * rank_f * factor * eps * fitness.shape[0]).float()
+            local_gradients.append(grad)
+
+        if global_gradients:
+            for j in range(len(global_gradients)):
+                global_gradients[j] = torch.add(global_gradients[j], local_gradients[j])
+        else:
+            global_gradients = local_gradients
+
+    c = 0
+    for k, v in model.es_params():
+        shift, _ = adam(lambda x: (1, -global_gradients[c]), v, {'learningRate': 0.001})
+        v.copy_(shift)
+        c += 1
+
+    # lr = 0.1
+    # for i in range(fitness.shape[0]):
+    #     np.random.seed(seeds[i])
+    #     factor = -1 if neg_list[i] else 1
+    #     rank_f = rank[i]
+    #
+    #     for k, v in model.es_params():
+    #         eps = np.random.normal(0, 1, v.size())
+    #         v += torch.from_numpy(lr / (fitness.shape[0] * sigma) *
+    #                               (rank_f * factor * eps)).float()
+
+    torch.save(model.state_dict(), "dn/latest.pth")
+
+
+def train_loop(model, dn="img", iterations=100000, pop_size=40, sigma=0.05, plot=False):
 
     for i in range(iterations):
-        x = normalize(sample_input(HEIGHT_GRID, LENGTH_GRID))
+        sample = sample_input(HEIGHT_GRID, LENGTH_GRID)
+        x = normalize(next(sample))
 
         processes = []
         queue = mp.Queue()
@@ -173,10 +257,16 @@ def train_loop(model, dn, iterations=100000, pop_size=40, sigma=0.05):
         seeds.pop(idx)
         original_f = fitness.pop(idx)
         neg_list.pop(idx)
-        print(results)
+
+        EPISODES.append(i)
+        gradient_update(model, np.array(fitness), seeds, neg_list, original_f, sigma, plot, dn)
 
 
 if __name__ == "__main__":
+    CURR_F = []
+    MAX_F = []
+    AVG_F = []
+    EPISODES = []
 
     #   indexes input
     #   0: stiff -> 0, 1 (no, yes)
@@ -184,16 +274,15 @@ if __name__ == "__main__":
     #   2: length
 
     # 10 * 8
-    HEIGHT_GRID = 10
+    HEIGHT_GRID = 5
     LENGTH_GRID = 10
     LOC, COMB = det_grid_positions(LENGTH_GRID, HEIGHT_GRID)
     N_MAX = len(COMB)
     EI = 1e5
 
     m = Model(3, N_MAX, 1, (35,))
-    print(N_MAX)
 
-    train_loop(m, "dn", 1, 40, 0.05)
+    train_loop(m, "dn", 100000, 40, 0.05, plot=True)
 
 
 
