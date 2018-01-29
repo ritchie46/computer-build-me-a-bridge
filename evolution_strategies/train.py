@@ -66,7 +66,7 @@ def get_fitness(x, w, l, h, n,):
     """
 
     out = np.zeros(3)
-
+    EI = 15e3
     w0 = (100 * l**3) / (48 * EI)
     if w < w0:
         out[0] = 0
@@ -80,8 +80,10 @@ def get_fitness(x, w, l, h, n,):
 
 def plt_structure(dna, dn):
     ss = build_single_bridge(dna, COMB, LOC, HEIGHT_GRID, get_ss=True, support_btm=True)
-    fig = ss.show_structure(show=False, verbosity=1)
-    fig.savefig(os.path.join(dn, "bridge.png"))
+    if ss:
+        fig = ss.show_structure(show=False, verbosity=1)
+        fig.savefig(os.path.join(dn, "bridge.png"))
+
 
 def evaluate(x, dna, seed, queue, is_negative):
     """
@@ -203,6 +205,7 @@ def gradient_update(model, fitness, seeds, neg_list, original_fitness, sigma=0.0
     #                               (rank_f * factor * eps)).float()
 
     torch.save(model.state_dict(), "dn/latest.pth")
+    return model
 
 
 def train_loop(model, dn="img", iterations=100000, pop_size=40, sigma=0.05, plot=False):
@@ -239,20 +242,20 @@ def train_loop(model, dn="img", iterations=100000, pop_size=40, sigma=0.05, plot
             p.start()
             processes.append(p)
             is_negative = not is_negative
-            #p.join()
 
         assert len(all_seeds) == 0
 
         # Evaluate the unmodified model as well
         dna = np.round(model(Variable(torch.from_numpy(x), volatile=True).float()).data.numpy())
         p = mp.Process(target=evaluate,
-                       args=(x, dna, "dummy", queue, "dummy"))
+                      args=(x, dna, "dummy", queue, "dummy"))
         p.start()
         processes.append(p)
+        results = [queue.get() for _ in processes]
+
         for p in processes:
             p.join()
 
-        results = [queue.get() for _ in processes]
         seeds = list(map(lambda x: x[0], results))
         fitness = list(map(lambda x: x[1], results))
         neg_list = list(map(lambda x: x[2], results))
@@ -264,11 +267,13 @@ def train_loop(model, dn="img", iterations=100000, pop_size=40, sigma=0.05, plot
         neg_list.pop(idx)
 
         EPISODES.append(i)
-        gradient_update(model, np.array(fitness), seeds, neg_list, original_f, sigma, plot, dn)
+        model = gradient_update(model, np.array(fitness), seeds, neg_list, original_f, sigma, plot, dn)
 
         if i % 5 == 0:
             plt_structure(dna, dn)
 
+        import time
+        time.sleep(1)
 
 
 if __name__ == "__main__":
@@ -287,12 +292,15 @@ if __name__ == "__main__":
     LENGTH_GRID = 10
     LOC, COMB = det_grid_positions(LENGTH_GRID, HEIGHT_GRID)
     N_MAX = len(COMB)
-    EI = 1e5
+    EI = 1e2
+
+    # Not higher than the number of cores
     BATCH_SIZE = 4
 
-    m = Model(3, N_MAX, 1, (35,))
+    m = Model(3, N_MAX, 1, (N_MAX // 2,))
+    ITERATIONS = int(1e9)
 
-    train_loop(m, "dn", 100000, BATCH_SIZE, 0.05, plot=True)
+    train_loop(m, "dn", ITERATIONS, BATCH_SIZE, 0.05, plot=True)
 
 
 

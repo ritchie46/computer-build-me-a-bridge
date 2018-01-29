@@ -1,8 +1,8 @@
 import numpy as np
-import sys
+#import sys
 from itertools import combinations, product
 from scipy.spatial.distance import euclidean
-sys.path.append("/home/ritchie46/code/anaStruct")
+#sys.path.append("/home/ritchie46/code/anaStruct")
 from anastruct.fem.system import SystemElements
 
 
