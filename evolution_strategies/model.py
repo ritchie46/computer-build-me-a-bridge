@@ -26,10 +26,10 @@ class Model(torch.nn.Module):
         self.dense_out = nn.Linear(hidden_neurons[-1], n_out)
 
     def forward(self, x):
-        x = F.relu(self.dense_in(x))
+        x = F.selu(self.dense_in(x))
 
         for f in self.hidden:
-            x = F.relu(f(x))
+            x = F.selu(f(x))
 
         return F.sigmoid(self.dense_out(x))
 
