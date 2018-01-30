@@ -147,7 +147,7 @@ def gradient_update(model, fitness, seeds, neg_list, original_fitness, sigma=0.0
     a = np.array(fitness)
     a[a > 0] = 1
     rank *= a
-    global AVG_F, MAX_F, CURR_F
+    global AVG_F, MAX_F, CURR_F, EPISODES
 
     # is approximated as the original fitness score isn't in the fitness array
     original_rank = np.argmin(np.abs(np.sort(fitness)[::-1] - original_fitness))
@@ -168,6 +168,7 @@ def gradient_update(model, fitness, seeds, neg_list, original_fitness, sigma=0.0
             AVG_F = AVG_F[::2]
             CURR_F = CURR_F[::2]
             MAX_F = MAX_F[::2]
+            EPISODES = EPISODES[::2]
 
         plt.ylabel('fitness')
         plt.xlabel('episode num')
