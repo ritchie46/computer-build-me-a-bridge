@@ -83,30 +83,33 @@ def plt_structure(dna, dn):
     if ss:
         fig = ss.show_structure(show=False, verbosity=1)
         fig.savefig(os.path.join(dn, "bridge.png"))
+        plt.close("all")
 
 
-def evaluate(x, dna, seed, queue, is_negative):
+def evaluate(batch, dna, seed, queue, is_negative):
     """
 
-    :param x: (array) Normalized input of the model.
+    :param batch: (array) Normalized input of the model.
     :param dna: (array) Output of the model. Rounded to binary values.
     :param seed: (int) Seed of this percurbation.
     :param queue: (Queue) Queue for parallel process.
     :param is_negative: (bool) Model or anti-model.
     :return: None
     """
-
-    result = build_single_bridge(dna, COMB, LOC, HEIGHT_GRID, es=True, support_btm=True)
-
-    if result is not None:
-        if isinstance(result, tuple):
-            fitness = get_fitness(x, result[0], result[1], result[2], result[3])
+    total = 0
+    for x, dna in zip(batch, dna):
+        result = build_single_bridge(dna, COMB, LOC, HEIGHT_GRID, es=True, support_btm=True)
+        if result is not None:
+            if isinstance(result, tuple):
+                fitness = get_fitness(x, result[0], result[1], result[2], result[3])
+            else:
+                fitness = result
         else:
-            fitness = result
-    else:
-        fitness = 0
+            fitness = 0
 
-    queue.put([seed, fitness, is_negative])
+        total += fitness
+
+    queue.put([seed, total, is_negative])
 
 
 def normalize(x):
@@ -121,12 +124,11 @@ def sample_input(h, l):
     :return: (array) [[stiff, h, l]]
     """
 
-    h = np.random.randint(h // 3, h + 1)
-    l = np.random.randint(l // 3, l + 1)
-    stiff = np.random.randint(2)
-
     while True:
-        yield np.array([stiff, h, l])
+        h_s = np.random.randint(h // 3, h + 1)
+        l_s = np.random.randint(l // 3, l + 1)
+        stiff = np.random.randint(2)
+        yield np.array([stiff, h_s, l_s])
 
 
 def rank_fitness(fitness):
@@ -138,12 +140,15 @@ def rank_fitness(fitness):
 def gradient_update(model, fitness, seeds, neg_list, original_fitness, sigma=0.05, plot=False,
                     dn="img"):
 
-    batch_size = len(fitness)
-    assert len(seeds) == batch_size
+    pop_size = len(fitness)
+    assert len(seeds) == pop_size
 
     rank = rank_fitness(fitness)
+    a = np.array(fitness)
+    a[a > 0] = 1
+    rank *= a
 
-    # is aproximated as the original fitness score isn't in the fitness array
+    # is approximated as the original fitness score isn't in the fitness array
     original_rank = np.argmin(np.abs(np.sort(fitness)[::-1] - original_fitness))
 
     print(f"Original rank: {original_rank} out of {fitness.shape[0]}. Score: {original_fitness}")
@@ -178,7 +183,7 @@ def gradient_update(model, fitness, seeds, neg_list, original_fitness, sigma=0.0
 
         for k, v in model.es_params():  # loop over weights and biases of all layers
             eps = np.random.normal(0, 1, v.size())
-            grad = torch.from_numpy(sigma * rank_f * factor * eps * fitness.shape[0]).float()
+            grad = torch.from_numpy(1 / (sigma * fitness.shape[0]) * rank_f * factor * eps).float()
             local_gradients.append(grad)
 
         if global_gradients:
@@ -193,26 +198,19 @@ def gradient_update(model, fitness, seeds, neg_list, original_fitness, sigma=0.0
         v.copy_(shift)
         c += 1
 
-    # lr = 0.1
-    # for i in range(fitness.shape[0]):
-    #     np.random.seed(seeds[i])
-    #     factor = -1 if neg_list[i] else 1
-    #     rank_f = rank[i]
-    #
-    #     for k, v in model.es_params():
-    #         eps = np.random.normal(0, 1, v.size())
-    #         v += torch.from_numpy(lr / (fitness.shape[0] * sigma) *
-    #                               (rank_f * factor * eps)).float()
-
     torch.save(model.state_dict(), "dn/latest.pth")
     return model
 
 
-def train_loop(model, dn="img", iterations=100000, pop_size=40, sigma=0.05, plot=False):
-
+def train_loop(model, dn="img", iterations=100000, pop_size=40, batch_size=20, sigma=0.05, plot=False):
+    sample = sample_input(HEIGHT_GRID, LENGTH_GRID)
     for i in range(iterations):
-        sample = sample_input(HEIGHT_GRID, LENGTH_GRID)
-        x = normalize(next(sample))
+
+        batch = []
+        for j in range(batch_size):
+            batch.append(normalize(next(sample)))
+
+        batch = np.vstack(batch)
 
         processes = []
         queue = mp.Queue()
@@ -235,9 +233,9 @@ def train_loop(model, dn="img", iterations=100000, pop_size=40, sigma=0.05, plot
         while all_models:
             perturbed_model = all_models.pop()
             seed = all_seeds.pop()
-            dna = np.round(perturbed_model(Variable(torch.from_numpy(x), volatile=True).float()).data.numpy())
+            dna = np.round(perturbed_model(Variable(torch.from_numpy(batch), volatile=True).float()).data.numpy())
             p = mp.Process(target=evaluate,
-                           args=(x, dna, seed, queue, is_negative))
+                           args=(batch, dna, seed, queue, is_negative))
 
             p.start()
             processes.append(p)
@@ -246,9 +244,9 @@ def train_loop(model, dn="img", iterations=100000, pop_size=40, sigma=0.05, plot
         assert len(all_seeds) == 0
 
         # Evaluate the unmodified model as well
-        dna = np.round(model(Variable(torch.from_numpy(x), volatile=True).float()).data.numpy())
+        dna = np.round(model(Variable(torch.from_numpy(batch), volatile=True).float()).data.numpy())
         p = mp.Process(target=evaluate,
-                      args=(x, dna, "dummy", queue, "dummy"))
+                       args=(batch, dna, "dummy", queue, "dummy"))
         p.start()
         processes.append(p)
         results = [queue.get() for _ in processes]
@@ -295,12 +293,12 @@ if __name__ == "__main__":
     EI = 1e2
 
     # Not higher than the number of cores
-    BATCH_SIZE = 4
+    POP_SIZE = 4
 
-    m = Model(3, N_MAX, 1, (N_MAX // 2,))
+    m = Model(3, N_MAX, 3, (N_MAX // 4, N_MAX // 4, N_MAX // 4))
     ITERATIONS = int(1e9)
 
-    train_loop(m, "dn", ITERATIONS, BATCH_SIZE, 0.05, plot=True)
+    train_loop(m, "dn", ITERATIONS, POP_SIZE, 20, 0.05, plot=True)
 
 
 
